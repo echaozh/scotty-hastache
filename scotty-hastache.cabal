@@ -1,5 +1,5 @@
 name:                scotty-hastache
-version:             0.2.0
+version:             0.3
 homepage:            https://github.com/scotty-web/scotty-hastache
 bug-reports:	     https://github.com/scotty-web/scotty-hastache/issues
 synopsis:            Easy Mustache templating support for Scotty
