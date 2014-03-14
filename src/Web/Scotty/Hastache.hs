@@ -42,44 +42,29 @@ Upon the @GET \/beam@ the result will be:
 -}
 module Web.Scotty.Hastache where
 
-import           Control.Arrow                   ((***))
-import           Control.Monad.State             as State
-import           Data.IORef                      (newIORef, readIORef,
-                                                  writeIORef)
-import qualified Data.Map                        as M
-import           Data.Maybe                      (fromMaybe)
-import           Data.Monoid                     (mempty)
 import           Data.Text.Lazy                  (Text)
-import           Network.Wai                     (Application, Response)
+import           Network.Wai                     (Application)
 import           Network.Wai.Handler.Warp        (Port)
-import           System.FilePath.Posix           ((</>))
-import           Text.Blaze.Html.Renderer.String as BRS
-import           Text.Blaze.Html.Renderer.Utf8   as BRU
-import           Text.Blaze.Internal             (Markup)
 import           Text.Hastache
-import           Text.Hastache.Context
 
+import qualified Web.Scotty.Hastache.Trans       as Trans
 import           Web.Scotty.Trans                as S
 
 -- * Runners and types
 
 -- | The runner to use instead of 'scotty'
 scottyH :: (ScottyError e) => Port -> ScottyH e () -> IO ()
-scottyH p s = do
-    (runH, runActionToIO) <- mkHStateRunners defaultConfig
-    scottyT p runH runActionToIO s
+scottyH p = Trans.scottyHT p id id
 
 -- | The runner to use instead of 'scottyOpts'
 scottyHOpts :: (ScottyError e) => Options -> ScottyH e () -> IO ()
-scottyHOpts opts s = do
-    (runH, runActionToIO) <- mkHStateRunners defaultConfig
-    scottyOptsT opts runH runActionToIO s
+scottyHOpts opts = Trans.scottyHOptsT opts id id
 
 -- | A type synonym for @ScottyT e HState@; with custom exception types
-type ScottyH e = ScottyT e HState
+type ScottyH e = Trans.ScottyHT e IO
 
 -- | A type synonym for @ScottyT e HState@; with custom exception types
-type ActionH e = ActionT e HState
+type ActionH e = Trans.ActionHT e IO
 
 -- ** Specialized types and runners
 
@@ -97,29 +82,23 @@ scottyHOpts' = scottyHOpts
 
 -- | Update the Hastache configuration as whole
 setHastacheConfig :: MuConfig IO -> ScottyH e ()
-setHastacheConfig conf = do
-  (_, tmap) <- lift State.get
-  lift . State.put $ (conf, tmap)
+setHastacheConfig = Trans.setHastacheConfig
 
 -- | Modify the Hastache configuration as whole
 modifyHastacheConfig :: (MuConfig IO -> MuConfig IO) -> ScottyH e ()
-modifyHastacheConfig f = lift $ State.modify (f *** id)
+modifyHastacheConfig = Trans.modifyHastacheConfig
 
 -- | Set the path to the directory with templates. This affects
 -- how /both/ 'hastache' and the @{{> template}}@ bit searches for the
 -- template files.
 setTemplatesDir :: FilePath -> ScottyH e ()
-setTemplatesDir dir = do
-  lift $ State.modify $ \(conf :: MuConfig IO, tmap) ->
-      (conf { muTemplateFileDir = Just dir }, tmap)
+setTemplatesDir = Trans.setTemplatesDir
 
 -- | Set the default extension for template files. This affects
 -- how /both/ 'hastache' and the @{{> template}}@ bit searches for the
 -- template files.
 setTemplateFileExt :: String -> ScottyH e ()
-setTemplateFileExt ext = do
-  lift $ State.modify $ \(conf :: MuConfig IO, tmap) ->
-      (conf { muTemplateFileExt = Just ext }, tmap)
+setTemplateFileExt = Trans.setTemplateFileExt
 
 -- ** Actions
 
@@ -132,49 +111,13 @@ setTemplateFileExt ext = do
 -- substituted for their values, uninitialized variables are 
 -- considered to be empty/null.
 hastache :: ScottyError e => FilePath -> ActionH e ()
-hastache tpl = do
-  ((conf :: MuConfig IO), tmap) <- lift State.get
-  setHeader "Content-Type" "text/html"
-  let cntx a  = fromMaybe MuNothing (M.lookup a tmap)
-  let tplFile = fromMaybe "." (muTemplateFileDir conf)
-              </> tpl
-              ++ fromMaybe "" (muTemplateFileExt conf)
-  res <- liftIO $ hastacheFile conf tplFile (mkStrContext cntx)
-  raw res
+hastache = Trans.hastache
 
 -- | Set the value of a mustache variable.
 setH :: ScottyError e => String -> MuType IO -> ActionH e ()
-setH x y = do
-  (conf, tmap) <- lift State.get
-  lift . State.put $ (conf, M.insert x y tmap)
+setH = Trans.setH
 
 -- * Internals
 
--- | State with the Hastache config
-type HState = StateT (MuConfig IO, M.Map String (MuType IO)) IO
-
-mkHStateRunners :: MuConfig IO -> IO (forall a. HState a -> IO a, HState Response -> IO Response)
-mkHStateRunners conf = do
-    gstate <- newIORef undefined
-    let runH m = do
-            (r,(muconf,_)) <- runStateT m (conf, mempty)
-            writeIORef gstate muconf
-            return r
-        runActionToIO m = do
-            muconf <- readIORef gstate
-            evalStateT m (muconf, mempty)
-    return (runH, runActionToIO)
-
 scottyHApp :: MuConfig IO -> ScottyH e () -> IO Application
-scottyHApp conf defs = do
-    (runH, runActionToIO) <- mkHStateRunners conf
-    scottyAppT runH runActionToIO defs
-
-instance Show Markup where
-  show = BRS.renderHtml
-
-instance MuVar Markup where
-  isEmpty = isEmpty . BRU.renderHtml
-  toLByteString = BRU.renderHtml
-
-
+scottyHApp conf = Trans.scottyHAppT conf id id
